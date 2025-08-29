@@ -36,16 +36,15 @@ setup_clash() {
     
     echo "📥 安装 Clash..."
     
-    # 克隆 clash 仓库
-    if [ ! -d "clash-for-linux-backup" ]; then
-        git clone https://ghfast.top/https://github.com/xiaoxiunique/clash-for-linux-backup
-    fi
+    # 克隆 clash 仓库到临时目录
+    TEMP_DIR=$(mktemp -d)
+    git clone https://ghfast.top/https://github.com/xiaoxiunique/clash-for-linux-backup "$TEMP_DIR/clash-for-linux-backup"
     
     # 配置环境变量
-    echo "CLASH_URL=$clash_url" > clash-for-linux-backup/.env
+    echo "CLASH_URL=$clash_url" > "$TEMP_DIR/clash-for-linux-backup/.env"
     
     # 启动 clash
-    cd clash-for-linux-backup
+    cd "$TEMP_DIR/clash-for-linux-backup"
     bash ./start.sh
     
     # 设置代理环境
@@ -57,7 +56,7 @@ setup_clash() {
         echo "⚠️  Clash 配置文件未找到，请手动配置代理"
     fi
     
-    cd ..
+    cd - > /dev/null
 }
 
 # 配置 Docker 代理
@@ -87,21 +86,19 @@ EOF
     echo "✅ Docker 代理配置完成"
 }
 
-# 下载 Windmill 配置文件
-download_windmill_config() {
+
+# 检查网络连接
+check_network() {
     echo ""
-    echo "📥 下载 Windmill 配置文件..."
+    echo "🌐 检查网络连接..."
     
-    # 创建工作目录
-    mkdir -p windmill-deployment
-    cd windmill-deployment
-    
-    # 下载配置文件
-    curl -sSL -o docker-compose.yml https://raw.githubusercontent.com/windmill-labs/windmill/main/docker-compose.yml
-    curl -sSL -o Caddyfile https://raw.githubusercontent.com/windmill-labs/windmill/main/Caddyfile
-    curl -sSL -o .env https://raw.githubusercontent.com/windmill-labs/windmill/main/.env
-    
-    echo "✅ 配置文件下载完成"
+    # 测试网络连接
+    if ! curl -sf --max-time 10 https://www.docker.com > /dev/null 2>&1; then
+        echo "⚠️  网络连接可能有问题，请确保代理配置正确"
+        echo "尝试继续安装..."
+    else
+        echo "✅ 网络连接正常"
+    fi
 }
 
 # 部署 Windmill
@@ -109,10 +106,34 @@ deploy_windmill() {
     echo ""
     echo "🚀 部署 Windmill..."
     
-    # 拉取最新镜像
-    docker compose pull
+    # 设置重试次数
+    max_retries=3
+    retry_count=0
+    
+    echo "📥 拉取 Docker 镜像..."
+    while [ $retry_count -lt $max_retries ]; do
+        if docker compose pull; then
+            echo "✅ 镜像拉取成功"
+            break
+        else
+            retry_count=$((retry_count + 1))
+            echo "⚠️  镜像拉取失败，重试 $retry_count/$max_retries..."
+            
+            if [ $retry_count -eq $max_retries ]; then
+                echo "❌ 镜像拉取失败，请检查网络连接和代理配置"
+                echo "💡 你可以尝试："
+                echo "   1. 检查代理是否正常工作"
+                echo "   2. 手动运行: docker compose pull"
+                echo "   3. 使用国内 Docker 镜像源"
+                exit 1
+            fi
+            
+            sleep 10
+        fi
+    done
     
     # 启动服务
+    echo "🚀 启动 Windmill 服务..."
     docker compose up -d
     
     echo "✅ Windmill 服务已启动"
@@ -183,7 +204,7 @@ main() {
     check_docker
     setup_clash
     setup_docker_proxy
-    download_windmill_config
+    check_network
     deploy_windmill
     wait_for_services
     show_results
